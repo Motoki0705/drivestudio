@@ -1,8 +1,9 @@
 """
-BAD-Gaussians integrated VanillaGaussians implementation
+Pure DriveStudio BAD-Gaussians integrated VanillaGaussians implementation
 
 This module integrates BAD-Gaussians motion blur handling capabilities
-into the OmniRe VanillaGaussians background representation.
+into the OmniRe VanillaGaussians background representation without
+requiring any nerfstudio dependencies.
 """
 
 from typing import Dict, List, Tuple, Optional, Literal
@@ -16,9 +17,12 @@ from torch.nn import Parameter
 
 from models.gaussians.vanilla import VanillaGaussians
 from models.gaussians.basics import *
-from models.bad_gaussians.bad_camera_optimizer import BadCameraOptimizer, BadCameraOptimizerConfig, TrajSamplingMode
+from models.bad_gaussians.drivestudio_camera_optimizer import (
+    DriveStudioCameraOptimizer, 
+    DriveStudioCameraOptimizerConfig, 
+    TrajSamplingMode
+)
 from models.bad_gaussians.bad_losses import EdgeAwareVariationLoss
-from models.bad_gaussians.camera_adapter import BADCameraOptimizerAdapter
 
 logger = logging.getLogger()
 
@@ -27,7 +31,8 @@ class BADVanillaGaussians(VanillaGaussians):
     BAD-Gaussians enhanced VanillaGaussians class.
     
     Extends VanillaGaussians with motion blur handling through
-    virtual camera trajectory generation and multi-view rendering.
+    virtual camera trajectory generation and multi-view rendering,
+    using only DriveStudio native components (no nerfstudio dependencies).
     """
 
     def __init__(
@@ -67,11 +72,14 @@ class BADVanillaGaussians(VanillaGaussians):
         # Training mode flag
         self._is_training = True
         
+        # Store last rendered RGB for TV loss computation
+        self._last_rendered_rgb = None
+        
     def _setup_camera_optimizer(self, camera_optimizer_cfg: OmegaConf, num_cameras: int, device: torch.device):
-        """Setup the BAD camera optimizer"""
+        """Setup the DriveStudio camera optimizer"""
         try:
-            # Convert OmegaConf to BadCameraOptimizerConfig
-            config = BadCameraOptimizerConfig(
+            # Convert OmegaConf to DriveStudioCameraOptimizerConfig
+            config = DriveStudioCameraOptimizerConfig(
                 mode=camera_optimizer_cfg.get("mode", "linear"),
                 bezier_degree=camera_optimizer_cfg.get("bezier_degree", 9),
                 trans_l2_penalty=camera_optimizer_cfg.get("trans_l2_penalty", 0.0),
@@ -80,13 +88,12 @@ class BADVanillaGaussians(VanillaGaussians):
                 initial_noise_se3_std=camera_optimizer_cfg.get("initial_noise_se3_std", 1e-5)
             )
             
-            bad_optimizer = BadCameraOptimizer(
+            self.camera_optimizer = DriveStudioCameraOptimizer(
                 config=config,
                 num_cameras=num_cameras,
                 device=device
             )
-            self.camera_optimizer = BADCameraOptimizerAdapter(bad_optimizer)
-            logger.info(f"Initialized BAD camera optimizer with mode: {config.mode}")
+            logger.info(f"Initialized DriveStudio camera optimizer with mode: {config.mode}")
         except Exception as e:
             logger.warning(f"Failed to initialize camera optimizer: {e}")
             self.camera_optimizer = None
@@ -115,9 +122,7 @@ class BADVanillaGaussians(VanillaGaussians):
         # Use BAD-Gaussians multi-view rendering if available and in training
         if (self.camera_optimizer is not None and 
             self._is_training and 
-            hasattr(cam, 'metadata') and 
-            cam.metadata is not None and 
-            'cam_idx' in cam.metadata):
+            self.camera_optimizer.config.mode != "off"):
             return self._get_gaussians_multi_view(cam, mode)
         else:
             # Fallback to standard single-view rendering
@@ -135,7 +140,7 @@ class BADVanillaGaussians(VanillaGaussians):
             Averaged Gaussian parameters from multiple virtual views
         """
         try:
-            # Generate virtual cameras using BAD camera optimizer
+            # Generate virtual cameras using DriveStudio camera optimizer
             virtual_cameras = self._generate_virtual_cameras(cam, mode)
             
             if len(virtual_cameras) == 1:
@@ -157,7 +162,7 @@ class BADVanillaGaussians(VanillaGaussians):
     
     def _generate_virtual_cameras(self, cam: dataclass_camera, mode: TrajSamplingMode) -> List[dataclass_camera]:
         """
-        Generate virtual cameras using BAD camera optimizer.
+        Generate virtual cameras using DriveStudio camera optimizer.
         
         Args:
             cam: Input camera
@@ -177,7 +182,7 @@ class BADVanillaGaussians(VanillaGaussians):
                 # Use a default cam_idx if not provided
                 cam.metadata['cam_idx'] = 0
                 
-            # Apply camera optimization using adapter
+            # Apply camera optimization using DriveStudio optimizer
             virtual_cameras = self.camera_optimizer.apply_to_camera(cam, mode)
             return virtual_cameras if virtual_cameras else [cam]
         except Exception as e:
@@ -218,7 +223,9 @@ class BADVanillaGaussians(VanillaGaussians):
         param_groups = super().get_param_groups()
         
         # Add camera optimizer parameters if available
-        if self.camera_optimizer is not None and hasattr(self.camera_optimizer, 'pose_adjustment'):
+        if (self.camera_optimizer is not None and 
+            hasattr(self.camera_optimizer, 'pose_adjustment') and
+            self.camera_optimizer.pose_adjustment is not None):
             param_groups[self.class_prefix + "camera_opt"] = [self.camera_optimizer.pose_adjustment]
             
         return param_groups
@@ -229,22 +236,19 @@ class BADVanillaGaussians(VanillaGaussians):
         
         # Add TV loss if enabled in config
         tv_loss_cfg = self.reg_cfg.get("tv_loss", None) if self.reg_cfg else None
-        if tv_loss_cfg is not None and hasattr(self, '_last_rendered_rgb'):
+        if tv_loss_cfg is not None and self._last_rendered_rgb is not None:
             try:
-                # Assume RGB is in format (H, W, 3)
-                if hasattr(self, '_last_rendered_rgb') and self._last_rendered_rgb is not None:
-                    rgb_tensor = self._last_rendered_rgb.permute(2, 0, 1).unsqueeze(0)  # (1, 3, H, W)
-                    tv_loss_value = self.tv_loss(rgb_tensor, mean=True)
-                    loss_dict["tv_loss"] = tv_loss_value * tv_loss_cfg.w
+                # RGB is in format (H, W, 3), convert to (1, 3, H, W)
+                rgb_tensor = self._last_rendered_rgb.permute(2, 0, 1).unsqueeze(0)
+                tv_loss_value = self.tv_loss(rgb_tensor, mean=True)
+                loss_dict["tv_loss"] = tv_loss_value * tv_loss_cfg.w
             except Exception as e:
                 logger.warning(f"TV loss computation failed: {e}")
         
         # Add camera optimizer losses
         if self.camera_optimizer is not None:
             try:
-                cam_loss_dict = {}
-                self.camera_optimizer.get_loss_dict(cam_loss_dict)
-                loss_dict.update(cam_loss_dict)
+                self.camera_optimizer.get_loss_dict(loss_dict)
             except Exception as e:
                 logger.warning(f"Camera optimizer loss computation failed: {e}")
                 
@@ -266,3 +270,40 @@ class BADVanillaGaussians(VanillaGaussians):
         except Exception as e:
             logger.warning(f"Camera optimizer metrics computation failed: {e}")
             return {}
+    
+    def postprocess_per_train_step(
+        self,
+        step: int,
+        optimizer: torch.optim.Optimizer,
+        radii: torch.Tensor,
+        xys_grad: torch.Tensor,
+        last_size: int,
+    ) -> None:
+        """Post-processing after each training step including camera optimizer updates"""
+        # Call parent postprocessing
+        super().postprocess_per_train_step(step, optimizer, radii, xys_grad, last_size)
+        
+        # Update camera optimizer step if needed
+        if self.camera_optimizer is not None:
+            # Camera optimizer doesn't need special postprocessing in current implementation
+            pass
+    
+    def get_virtual_view_count(self) -> int:
+        """Get the number of virtual views configured"""
+        if self.camera_optimizer is None:
+            return 1
+        return self.camera_optimizer.config.num_virtual_views
+    
+    def set_camera_optimizer_mode(self, mode: str):
+        """Dynamically change camera optimizer mode"""
+        if self.camera_optimizer is not None:
+            self.camera_optimizer.config.mode = mode
+            logger.info(f"Camera optimizer mode changed to: {mode}")
+    
+    def is_motion_blur_enabled(self) -> bool:
+        """Check if motion blur (virtual views) is currently enabled"""
+        return (
+            self.camera_optimizer is not None and 
+            self.camera_optimizer.config.mode != "off" and 
+            self._is_training
+        )

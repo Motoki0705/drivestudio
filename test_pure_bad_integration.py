@@ -24,10 +24,11 @@ def check_pure_implementation_structure():
     print("=" * 60)
     
     checks = [
-        ("models/bad_gaussians/drivestudio_camera_optimizer.py", "Pure DriveStudio camera optimizer"),
+        ("models/bad_gaussians/drivestudio_camera_optimizer.py", "DriveStudio camera optimizer"),
         ("models/bad_gaussians/bad_losses.py", "BAD losses (no nerfstudio deps)"),
-        ("models/gaussians/bad_vanilla_pure.py", "PureBADVanillaGaussians class"),
-        ("configs/omnire_bad_pure.yaml", "Pure BAD-Gaussians configuration"),
+        ("models/bad_gaussians/pure_spline_functor.py", "Pure SE(3) spline functions"),
+        ("models/gaussians/bad_vanilla.py", "BADVanillaGaussians class"),
+        ("configs/omnire_bad.yaml", "BAD-Gaussians configuration"),
     ]
     
     passed = 0
@@ -43,19 +44,19 @@ def check_pure_config_structure():
     print("\nChecking pure configuration file structure...")
     print("=" * 60)
     
-    config_path = "configs/omnire_bad_pure.yaml"
+    config_path = "configs/omnire_bad.yaml"
     try:
         with open(config_path, 'r') as f:
             content = f.read()
         
         # Check for key configuration elements
         checks = [
-            ("models.gaussians.PureBADVanillaGaussians", "PureBADVanillaGaussians type definition"),
+            ("models.gaussians.BADVanillaGaussians", "BADVanillaGaussians type definition"),
             ("camera_optimizer:", "Camera optimizer configuration"),
             ("mode:", "Camera optimizer mode"),
             ("num_virtual_views:", "Virtual views configuration"),
             ("tv_loss:", "TV loss configuration"),
-            ("Pure DriveStudio", "Pure DriveStudio comment"),
+            ("no nerfstudio deps", "No nerfstudio dependencies comment"),
         ]
         
         passed = 0
@@ -80,7 +81,8 @@ def check_pure_python_syntax():
     
     files_to_check = [
         "models/bad_gaussians/drivestudio_camera_optimizer.py",
-        "models/gaussians/bad_vanilla_pure.py",
+        "models/bad_gaussians/pure_spline_functor.py",
+        "models/gaussians/bad_vanilla.py",
     ]
     
     passed = 0
@@ -109,7 +111,8 @@ def check_no_nerfstudio_dependencies():
     
     files_to_check = [
         "models/bad_gaussians/drivestudio_camera_optimizer.py",
-        "models/gaussians/bad_vanilla_pure.py",
+        "models/bad_gaussians/pure_spline_functor.py",
+        "models/gaussians/bad_vanilla.py",
     ]
     
     passed = 0
@@ -153,11 +156,11 @@ def check_pure_import_structure():
         with open(init_file, 'r') as f:
             content = f.read()
         
-        if "PureBADVanillaGaussians" in content:
-            print(f"✓ PureBADVanillaGaussians is registered in {init_file}")
+        if "BADVanillaGaussians" in content:
+            print(f"✓ BADVanillaGaussians is registered in {init_file}")
             return True
         else:
-            print(f"✗ PureBADVanillaGaussians not found in {init_file}")
+            print(f"✗ BADVanillaGaussians not found in {init_file}")
             return False
             
     except Exception as e:

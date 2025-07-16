@@ -49,7 +49,7 @@ trainer:
       lr: 0.005
     rotation:
       lr: 0.001
-    # BAD-Gaussians camera optimizer parameters
+    # Pure DriveStudio camera optimizer parameters
     camera_opt:
       lr: 1.0e-5
       lr_final: 1.0e-6
@@ -74,14 +74,14 @@ trainer:
 # ------------- Model ------------ #
 model:
   Background:
-    type: models.gaussians.BADVanillaGaussians  # Use BAD-Gaussians enhanced version
+    type: models.gaussians.BADVanillaGaussians  # Use DriveStudio BAD-Gaussians version (no nerfstudio deps)
     init:
       from_lidar:
         num_samples: 800_000
         return_color: True
       near_randoms: 100_000
       far_randoms: 100_000
-    # BAD-Gaussians camera optimizer configuration
+    # Pure DriveStudio camera optimizer configuration (no nerfstudio dependencies)
     camera_optimizer:
       mode: "cubic"                    # "off", "linear", "cubic", "bezier"
       bezier_degree: 9                 # for bezier mode
