@@ -18,11 +18,11 @@ from torch.nn import Parameter
 from omegaconf import OmegaConf
 
 from models.gaussians.basics import dataclass_camera
-from models.bad_gaussians.spline_functor import (
-    bezier_interpolation,
-    cubic_bspline_interpolation,
-    linear_interpolation,
-    linear_interpolation_mid,
+from models.bad_gaussians.pure_spline_functor import (
+    bezier_interpolation_se3,
+    cubic_bspline_interpolation_se3,
+    linear_interpolation_se3,
+    linear_interpolation_mid_se3,
 )
 
 TrajSamplingMode = Literal["uniform", "start", "mid", "end"]
@@ -178,29 +178,20 @@ class DriveStudioCameraOptimizer(nn.Module):
             raise ValueError(f"Unknown sampling mode: {mode}")
     
     def _linear_interpolation(self, pose_params: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
-        """Linear interpolation between two control points."""
-        p0, p1 = pose_params[:, 0, :], pose_params[:, 1, :]
-        # p0: [N, 6], p1: [N, 6], u: [num_samples]
-        # Result: [N, num_samples, 6]
-        return p0.unsqueeze(1) + u.unsqueeze(0).unsqueeze(-1) * (p1 - p0).unsqueeze(1)
+        """Linear interpolation between two control points using SE(3)."""
+        return linear_interpolation_se3(pose_params, u)
     
     def _linear_interpolation_mid(self, pose_params: torch.Tensor) -> torch.Tensor:
-        """Linear interpolation at midpoint."""
-        p0, p1 = pose_params[:, 0, :], pose_params[:, 1, :]
-        return (p0 + p1) * 0.5
+        """Linear interpolation at midpoint using SE(3)."""
+        return linear_interpolation_mid_se3(pose_params)
     
     def _cubic_interpolation(self, pose_params: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
-        """Cubic B-spline interpolation."""
-        # For simplicity, use linear interpolation between middle two points
-        # In a full implementation, this would use proper B-spline basis functions
-        p1, p2 = pose_params[:, 1, :], pose_params[:, 2, :]
-        return p1.unsqueeze(1) + u.unsqueeze(0).unsqueeze(-1) * (p2 - p1).unsqueeze(1)
+        """Cubic B-spline interpolation using SE(3)."""
+        return cubic_bspline_interpolation_se3(pose_params, u)
     
     def _bezier_interpolation(self, pose_params: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
-        """Bezier curve interpolation."""
-        # Simplified Bezier: use linear interpolation between first and last control points
-        p0, p_last = pose_params[:, 0, :], pose_params[:, -1, :]
-        return p0.unsqueeze(1) + u.unsqueeze(0).unsqueeze(-1) * (p_last - p0).unsqueeze(1)
+        """Bezier curve interpolation using SE(3)."""
+        return bezier_interpolation_se3(pose_params, u)
     
     def _pose_params_to_matrix(self, pose_params: torch.Tensor) -> torch.Tensor:
         """Convert 6DOF pose parameters to 4x4 transformation matrices.
